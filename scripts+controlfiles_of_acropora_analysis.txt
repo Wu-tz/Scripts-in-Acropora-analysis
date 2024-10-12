@@ -1,0 +1,362 @@
+#########Part of mitochondrial gene analysis
+######Data download and format conversion.The accession number of SRA data is list in the accession.txt.
+prefetch --option-file accession.txt
+fastq-dump --split-3 DRR089900
+fastq-dump --split-3 DRR089931
+
+######Quality Control
+fastp -i DRR089900.man_1.fastq -o fastp_DRR089900.man_1.fastq -I DRR089900.man_2.fastq -O fastp_DRR089900.man_2.fastq -Q --thread=5 --length_required=50 --n_base_limit=6 --compression=6
+fastp -i DRR089931.man_1.fastq -o fastp_DRR089931.man_1.fastq -I DRR089931.man_2.fastq -O fastp_DRR089931.man_2.fastq -Q --thread=5 --length_required=50 --n_base_limit=6 --compression=6
+
+######Mitochondria assembly
+get_organelle_from_reads.py -1 fastp_DRR089900.man_1.fastq -2 fastp_DRR089900.man_2.fastq -R 10 -k 21,45,65,85,105 -F animal_mt -o aawi
+get_organelle_from_reads.py -1 fastp_DRR089931.man_1.fastq -2 fastp_DRR089931.man_2.fastq -R 10 -k 21,45,65,85,105 -F animal_mt -o asel
+
+######Acquisition of 13 orthologous genes
+gffread anno/GeSeqJob-20240103-154123_aawi_GFF3.gff3.gtf -g aawi.fna -x aawi.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_intermedia_GFF3.gff3.gtf -g aint.fna -x aint.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_tenuis_GFF3.gff3.gtf -g aten.fna -x aten.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_cervicornis_GFF3.gff3.gtf -g acer.fna -x acer.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_microphthalma_GFF3.gff3.gtf -g amic.fna -x amic.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_yongei_GFF3.gff3.gtf -g ayon.fna -x ayon.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_cytherea_GFF3.gff3.gtf -g acyt.fna -x acyt.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_millepora_GFF3.gff3.gtf -g amil.fna -x amil.cds
+gffread anno/GeSeqJob-20240103-154123_asel_GFF3.gff3.gtf -g asel.fna -x asel.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_digitifera_GFF3.gff3.gtf -g adig.fna -x adig.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_muricata_GFF3.gff3.gtf -g amur.fna -x amur.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_florida_GFF3.gff3.gtf -g aflo.fna -x aflo.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_nasuta_GFF3.gff3.gtf -g anas.fna -x anas.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_hyacinthus_GFF3.gff3.gtf -g ahya.fna -x ahya.cds
+gffread anno/GeSeqJob-20240103-154123_Acropora_palmata_GFF3.gff3.gtf -g apal.fna -x apal.cds
+gffread anno/GeSeqJob-20240103-154123_Montipora_capitata_GFF3.gff3.gtf -g mcap.fna -x mcap.cds
+
+######Format conversion and reconstruction of phylogenetic tree
+for i in `cat speciesname.txt`;do seqkit seq ${i}.cds -w 0 > ${i}.fas;done
+for i in `cat genename.txt`;do for j in `cat speciesname.txt`;do grep -A 1 $i ${j}.cds >> ${i}.fas;done;done
+perl catfasta2phyml.pl -f *.fas > mitochondrial_connection.fas
+iqtree -s mitochondrial_connection.fas -m MFP -b 100 -nt AUTO
+
+
+
+#########Part of nuclear loci analysis
+######Processing of reference genome (Acropora millepora)
+perl ./scripts/transNCBIfas2normal.pl ./amil.fa amil > amil.simple.genome.fna
+perl ./scripts/delete_gff_splice.pl ./amil.genomic.gff amil.transname.list > amil.1.gff
+perl ./scripts/simplify_gff.pl ./amil.1.gff > amil.2.gff
+grep "Chr" amil.2.gff > amil.gff
+faSplit byname ./amil.simple.genome.fna .
+for i in `seq 1 14`;do mkdir Chr$i;mv Chr$i.fa Chr$i;done
+
+######Sequence alignment using lastz software. Take Chr1 as an example.
+perl /home/tianzhen/make_pipeline_of_compare_genome/lastz/bin/new_lastz.pl --hspthresh 2400 --inner 2000 --ydrop 9400 --gappedthresh 3000 --minScore 5000 --chain --linearGap medium --cuts 30 --cpu 10 /home/tianzhen/make_pipeline_of_compare_genome/lastz/Chr1/Chr1.fa /home/tianzhen/make_pipeline_of_compare_genome/lastz/genome/$i.fa
+
+######Acquisition orthologous genes using runmutliz.py as follows
+"
+import os,sys,re
+H=[]
+for i in os.listdir("/project/tianzhenWu/acropora_01lastz/maf_deal/Chr1"):
+    if not re.search('.maf',i):continue
+    H.append(i[5:])
+chr = ["Chr1","Chr2","Chr3","Chr4","Chr5","Chr6","Chr7","Chr8","Chr9","Chr10","Chr11","Chr12","Chr13","Chr14"]
+for i in chr:
+	#os.system("mkdir %s"%i)
+        ax = open("/project/tianzhenWu/acropora_01lastz/maf_deal/%s/multiz.sh"%(i),'w')
+        flag=1
+        ax.write("multiz M=1 /project/tianzhenWu/acropora_01lastz/maf_deal/%s/%s /project/tianzhenWu/acropora_01lastz/maf_deal/%s/%s 0 all > /project/tianzhenWu/acropora_01lastz/maf_deal/%s/tmp.%s.maf\n"%(i,i+'_'+H[0],i,i+'_'+H[1],i,flag))
+        for j in range(len(H)-2):
+        	ax.write("multiz M=1 /project/tianzhenWu/acropora_01lastz/maf_deal/%s/%s /project/tianzhenWu/acropora_01lastz/maf_deal/%s/tmp.%s.maf 0 all > /project/tianzhenWu/acropora_01lastz/maf_deal/%s/tmp.%s.maf\n"%(i,i+'_'+H[2+j],i,flag,i,str(flag+1)))
+			flag = flag + 1
+	ax.close()
+"
+
+for i in `seq 1 14`
+do
+mkdir $i
+cat << EOF > $i/$i.sh
+perl /home/tianzhen/make_pipeline_of_compare_genome/lastz/scripts/01.convertMaf2List.pl /project/tianzhenWu/acropora_01lastz/maf_deal/Chr$i/tmp.14.maf amil.$i
+perl /home/tianzhen/make_pipeline_of_compare_genome/lastz/scripts/02.lst2gene.pl amil.$i /home/tianzhen/make_pipeline_of_compare_genome/lastz/amil.gff
+cp genes/* ../genes/
+EOF
+done
+
+######Filter out sequences with poor alignment quality, with a filtering threshold of 0.33.
+perl /home/tianzhen/make_pipeline_of_compare_genome/lastz/scripts/filter_genes_base_gap_huang.pl /project/tianzhenWu/lastz/addoutgroup/mafdeal/genes/ gene 0.33
+
+
+######Reconstruction of phylogenetic tree
+###concatenation-based method
+perl ~/scripts/catfasta2phyml.pl -f /project/tianzhenWu/acropora_01lastz/maf_deal/align/* > ./connection.fas
+perl 04.4Dsites.pl
+awk '/^>/{if (l!="") print l; print; l=0; next}{l+=length($0)}END{print l}' super_sequence.fasta
+iqtree -s connect4Dsites.fa -m MFP -b 100 -nt 8
+
+###coalescence-based method
+for i in `ls`;do echo iqtree -s $i -m MFP -b 100 -nt 2 >> runiqtree.sh;done
+ParaFly -c runiqtree.sh -CPU 50
+java -jar Astral/astral.5.7.8.jar -i ../7756trees/alltree.rooted.txt -b bs-file-test -o bs-astral.tree 2>bs-out.log
+
+######Visualizing conflicts between gene trees and species trees
+java -jar /project/tianzhenWu/software/phyparts/phyparts/target/phyparts-0.0.1-SNAPSHOT-jar-with-dependencies.jar -a 1 -v -d rooted_7756_gene_tree/ -m rooted_astral_tree/astral.tree
+python phypartspiecharts.py rooted_astral_tree/astral.tree out 7756
+
+
+######Gene flow detection
+###using QuIBL software
+python QuIBL.py my_analysis/InputFile.txt
+
+"
+[Input]
+treefile: ./mine_analysis/smallTestTrees.txt #7756 gene trees are listed in the file smallTestTrees.txt
+numdistributions: 2
+likelihoodthresh: 0.01
+numsteps: 50
+gradascentscalar: 0.5
+totaloutgroup: amil
+multiproc: True
+maxcores:70
+
+[Output]
+OutputPath: ./my_Out.csv
+"
+
+
+
+###using PhyloNet software
+java -jar PhyloNetv3_8_2.jar script.nex #script.nex as follows
+
+"
+BEGIN Trees;
+
+Tree gt0=(mcap:0.23313,((aten:0.00333425,ayon:0.0025615)81:0.010682,((acer:1.0009e-06,apal:1.0009e-06)100:0.0217271,((((((acyt:0.00515602,amur:0.00366956)66:0.000838532,amil:0.00062483)67:0.00220102,asel:0.00504667)66:0.000855245,(adig:0.00336021,(amic:0.00702016,anas:0.00485154)96:0.00441368)62:0.00177383)43:0.00129419,ahya:0.00386221)53:0.0017787,(aint:0.00591654,(aawi:0.0022027,aflo:0.00146521)99:0.00294243)93:0.00205264)98:0.0133876)97:0.0188497)1:0.23313);
+Tree gt1=(mcap:0.160202,((aten:0.00653975,ayon:0.00111305)98:0.013008,(((acyt:0.00332612,ahya:0.00435667)56:0.00168771,(((adig:0.00168091,(amur:0.00508303,asel:0.00139402)23:0.00058298)48:0.0022422,amic:0.0043241)21:0.00057112,amil:0.00572003)42:0.00105358)75:0.00253868,(anas:0.0110214,((acer:1e-06,apal:0.00116924)99:0.00376128,(aint:0.0059878,(aawi:0.0015074,aflo:0.00260121)44:0.0019673)66:0.0026942)59:0.00311727)22:0.00115305)44:0.00484436)1:0.160202);
+Tree gt2=(mcap:0.173432,((aten:0.00163856,ayon:0.00165528)99:0.00135925,((acer:0.00165717,apal:0.00162864)99:0.0102135,(((((acyt:0.00495813,(amil:0.00272029,asel:0.00115734)59:0.00272138)25:1e-06,ahya:0.00329802)34:0.00163922,amur:0.00332491)40:0.001551,(adig:0.00662368,(amic:0.00164651,anas:0.00331379)68:1e-06)70:0.00342373)81:0.00503939,(aint:0.00667106,(aawi:1e-06,aflo:1e-06)99:0.00164019)97:0.00680291)59:0.0013736)76:0.019435)1:0.173432);
+......
+......(7756 gene trees)
+......
+Tree gt7754=(mcap:0.214093,((aten:1e-06,ayon:0.000902767)100:0.0147732,(((acer:1e-06,apal:0.00089801)100:0.00656668,((((acyt:0.00732293,amur:0.00733328)88:0.00547435,ahya:0.00271516)31:0.00181082,(amil:0.000905558,asel:0.000895111)100:0.00546184)24:0.00269874,(adig:0.0118937,(amic:0.00362776,anas:0.00361753)55:0.00181204)37:1e-06)37:0.00344466)69:0.00620168,(aint:0.0032952,(aawi:0.00593912,aflo:0.00128259)96:0.00452553)99:0.0119615)73:0.0192286)1:0.214093);
+Tree gt7755=(mcap:0.206011,((((acer:1e-06,apal:0.00117557)99:0.00757258,(((acyt:0.00479278,(ahya:0.00477411,amil:0.00356159)82:0.00113145)73:0.00248898,(amur:0.00122118,asel:0.00114026)100:0.0119631)44:0.00118317,((adig:0.0119925,amic:0.00833811)54:1e-06,anas:0.00354971)60:0.00247133)93:0.00944053)54:0.00472005,(aten:0.00115117,ayon:0.00237977)93:0.0252382)33:0.00358302,(aflo:0.0032826,(aawi:0.00620389,aint:0.00483929)100:0.0101013)73:0.0016036)1:0.206011);
+
+END;
+
+BEGIN PHYLONET;
+
+InferNetwork_MPL (all) 10 -pl 8;
+"
+
+######Gene tree heterogeneity analysis using R pakages.
+
+library(TreeDist)
+library(ape)
+library(cluster)
+library(ggplot2)
+library(openxlsx)
+
+setwd("Work_Path")
+trees<-read.tree("species_genes.tre")
+trees_dist<-dist.topo(trees, method = "PH85") #Calculate RF, the data category of trees_dist is dist
+trees_matric<-as.matrix(trees_dist)
+write.table (trees_matric, file ="RF_pairs.tsv", sep ="\t")
+
+
+mds1 <- cmdscale(trees_dist, eig=TRUE, k=1) #k represents the dimension
+mds1.df <- as.data.frame(mds1$points)
+gskmn1 <- clusGap(mds1.df, FUN = KMeansPP, nstart = 20, K.max = 8, B = 100) ## Compute the gap statistic
+plot(gskmn1, xlab = "Number of clusters")
+n1 <- maxSE( gskmn1$Tab[, "gap"], gskmn1$Tab[, "SE.sim"], method ="Tibs2001SEmax")
+cat("Estimated number of clusters (k=1):", n1, "\n")
+#Estimated number of clusters (k=1): 1
+
+mds2 <- cmdscale(trees_dist, eig=TRUE, k=2) #k represents the dimension
+mds2.df <- as.data.frame(mds2$points)
+gskmn2 <- clusGap(mds2.df, FUN = KMeansPP, nstart = 20, K.max = 8, B = 100) ## Compute the gap statistic
+plot(gskmn2, xlab = "Number of clusters")
+n2 <- maxSE( gskmn2$Tab[, "gap"], gskmn2$Tab[, "SE.sim"], method ="Tibs2001SEmax")
+cat("Estimated number of clusters (k=2):", n2, "\n")
+#Estimated number of clusters (k=2): 1
+
+mds3 <- cmdscale(trees_dist, eig=TRUE, k=3) #k represents the dimension
+mds3.df <- as.data.frame(mds3$points)
+gskmn3 <- clusGap(mds3.df, FUN = KMeansPP, nstart = 20, K.max = 8, B = 100) ## Compute the gap statistic
+plot(gskmn3, xlab = "Number of clusters")
+n3 <- maxSE( gskmn3$Tab[, "gap"], gskmn3$Tab[, "SE.sim"], method ="Tibs2001SEmax")
+cat("Estimated number of clusters (k=3):", n3, "\n")
+#Estimated number of clusters (k=3): 1
+
+mds4 <- cmdscale(trees_dist, eig=TRUE, k=4) #k represents the dimension
+mds4.df <- as.data.frame(mds4$points)
+gskmn4 <- clusGap(mds4.df, FUN = KMeansPP, nstart = 20, K.max = 8, B = 100) ## Compute the gap statistic
+plot(gskmn4, xlab = "Number of clusters")
+n4 <- maxSE( gskmn4$Tab[, "gap"], gskmn4$Tab[, "SE.sim"], method ="Tibs2001SEmax")
+cat("Estimated number of clusters (k=4):", n4, "\n")
+#Estimated number of clusters (k=4): 3
+
+mds5 <- cmdscale(trees_dist, eig=TRUE, k=5) #k represents the dimension
+mds5.df <- as.data.frame(mds5$points)
+gskmn5 <- clusGap(mds5.df, FUN = KMeansPP, nstart = 20, K.max = 8, B = 100) ## Compute the gap statistic
+plot(gskmn5, xlab = "Number of clusters")
+n5 <- maxSE( gskmn5$Tab[, "gap"], gskmn5$Tab[, "SE.sim"], method ="Tibs2001SEmax")
+cat("Estimated number of clusters (k=5):", n5, "\n")
+#Estimated number of clusters (k=5): 3
+
+
+kmclusters <- kmeans(mds4.df, 3, nstart = 10)
+kmclusters <- as.factor(kmclusters$cluster)
+kmclusters
+mds4.var.per <- round(mds4$eig/sum(mds4$eig)*100,2)
+mds4.var.per
+mds4.values <- mds4$points
+
+mds4.data <- data.frame(Sample=rownames(mds4.values), X=mds4.values[,1], Y=mds4.values[,2])
+mds4.data$groups <- kmclusters
+mds4.data$Size <- ifelse(mds4.data$Sample == "tree1", 5, 1)
+write.table(mds4.data,file="mds4.tsv",sep="\t")
+write.xlsx(mds4.data,file="mds4.xlsx")
+
+ggplot(data=mds4.data, aes(x=X, y=Y,label=Sample, color=groups,size=Size))+
+  geom_point() +
+  xlab(paste("MDS1 - ", mds4.var.per[1], "%", sep=""))+
+  ylab(paste("MDS2 - ", mds4.var.per[2], "%", sep=""))+
+  theme_bw()+
+  ggtitle("MDS plot using Euclidean distance")
+
+
+######Control files used by Oneratio model in dN/dS ratio analyses.Take XM_044329335.fas as an example.
+
+"
+seqfile = ../../../gene/XM_044329335.fas
+treefile = ../../../tree/tree.txt
+outfile = tree_out
+noisy = 0
+verbose = 1
+runmode = 0
+seqtype = 1
+CodonFreq = 2
+clock = 0
+aaDist = 0
+aaRatefile = dat/jones.dat
+model = 0
+NSsites = 0
+icode = 0
+Mgene = 0
+fix_kappa = 0
+kappa = 2
+fix_omega = 0
+omega = 0.5
+fix_alpha = 1
+alpha = 0.
+Malpha = 0
+ncatG = 8
+getSE = 0
+RateAncestor = 1
+Small_Diff = .5e-6
+cleandata = 0
+"
+
+######Control files used by Freeratio model in dN/dS ratio analyses.Take XM_044329335.fas as an example.
+
+"
+seqfile = ../../../gene/XM_044329335.fas
+treefile = ../../../tree/tree.txt
+outfile = tree_out
+noisy = 0
+verbose = 1
+runmode = 0
+seqtype = 1
+CodonFreq = 2
+clock = 0
+aaDist = 0
+aaRatefile = dat/jones.dat
+model = 1
+NSsites = 0
+icode = 0
+Mgene = 0
+fix_kappa = 0
+kappa = 2
+fix_omega = 0
+omega = 0.5
+fix_alpha = 1
+alpha = 0.
+Malpha = 0
+ncatG = 8
+getSE = 0
+RateAncestor = 1
+Small_Diff = .5e-6
+cleandata = 0
+"
+
+
+######Control files used by MCMCtree analyses.
+###The first run calculates branch length and Hessian information
+"
+          seed = -1
+       seqfile = connect4Dsites.fa
+      treefile = input.trees
+      mcmcfile = mcmc.txt
+       outfile = out.txt
+
+         ndata = 1
+       seqtype = 0    * 0: nucleotides; 1:codons; 2:AAs
+       usedata = 1    * 0: no data; 1:seq like; 2:normal approximation; 3:out.BV (in.BV)
+         clock = 2    * 1: global clock; 2: independent rates; 3: correlated rates
+       RootAge = '<1.364'  * safe constraint on root age, used if no fossil for root.
+
+         model = 4    * 0:JC69, 1:K80, 2:F81, 3:F84, 4:HKY85
+         alpha = 0.5    * alpha for gamma rates at sites
+         ncatG = 5    * No. categories in discrete gamma
+
+     cleandata = 0    * remove sites with ambiguity data (1:yes, 0:no)?
+
+       BDparas = 1 1 0.1  * birth, death, sampling
+   kappa_gamma = 6 2      * gamma prior for kappa
+   alpha_gamma = 1 1      * gamma prior for alpha
+
+   rgene_gamma = 2 20 1   * gammaDir prior for rate for genes
+  sigma2_gamma = 1 10 1   * gammaDir prior for sigma^2     (for clock=2 or 3)
+
+      finetune = 1: .1 .1 .1 .1 .1 .1 * auto (0 or 1): times, musigma2, rates, mixing, paras, FossilErr
+
+         print = 1   * 0: no mcmc sample; 1: everything except branch rates 2: everything
+        burnin = 2000
+      sampfreq = 10
+       nsample = 100000
+
+*** Note: Make your window wider (100 columns) before running the program.
+"
+
+###The second run calculates the divergence time
+
+"
+          seed = -1
+       seqfile = connect4Dsites.fa
+      treefile = input.trees
+      mcmcfile = mcmc.txt
+       outfile = out.txt
+
+         ndata = 1
+       seqtype = 0    * 0: nucleotides; 1:codons; 2:AAs
+       usedata = 1    * 0: no data; 1:seq like; 2:normal approximation; 3:out.BV (in.BV)
+         clock = 2    * 1: global clock; 2: independent rates; 3: correlated rates
+       RootAge = '<1.364'  * safe constraint on root age, used if no fossil for root.
+
+         model = 4    * 0:JC69, 1:K80, 2:F81, 3:F84, 4:HKY85
+         alpha = 0.5    * alpha for gamma rates at sites
+         ncatG = 5    * No. categories in discrete gamma
+
+     cleandata = 0    * remove sites with ambiguity data (1:yes, 0:no)?
+
+       BDparas = 1 1 0.1  * birth, death, sampling
+   kappa_gamma = 6 2      * gamma prior for kappa
+   alpha_gamma = 1 1      * gamma prior for alpha
+
+   rgene_gamma = 2 20 1   * gammaDir prior for rate for genes
+  sigma2_gamma = 1 10 1   * gammaDir prior for sigma^2     (for clock=2 or 3)
+
+      finetune = 1: .1 .1 .1 .1 .1 .1 * auto (0 or 1): times, musigma2, rates, mixing, paras, FossilErr
+
+         print = 1   * 0: no mcmc sample; 1: everything except branch rates 2: everything
+        burnin = 2000000
+      sampfreq = 100
+       nsample = 1000000
+
+*** Note: Make your window wider (100 columns) before running the program.
+"
